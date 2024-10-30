@@ -1,14 +1,13 @@
 import network
 from machine import Pin, Timer, PWM
-import _thread
-import asyncio
-import utime
+import socket
+import uasyncio as asyncio
 import os
 from servo import Servo
 import json
 import machine
-import socket
 import time
+from rotary_irq_rp2 import RotaryIRQ
 
 machine.freq(240000000)
 
@@ -39,19 +38,24 @@ pwmLaunchMotorR.freq (100)
 
 pinAngleSwitch = Pin(5, Pin.IN,Pin.PULL_UP)
 
-pinLoadSwitchLoad = Pin(6, Pin.IN, Pin.PULL_UP)
+pinLoadSwitchA = Pin(6, Pin.IN, Pin.PULL_UP)
+pinLoadSwitchB = Pin(7, Pin.IN, Pin.PULL_UP)
 
-pinLoadSwitchUnload = Pin(7, Pin.IN, Pin.PULL_UP)
+#pinRotaryA = Pin(12, Pin.IN, Pin.PULL_UP)
+#pinRotaryB = Pin(13, Pin.IN, Pin.PULL_UP)
 
-pinRotaryA = Pin(12, Pin.IN, Pin.PULL_UP)
-pinRotaryB = Pin(13, Pin.IN, Pin.PULL_UP)
+anglingRotary = RotaryIRQ(pin_num_clk=13,
+                          pin_num_dt = 12,
+                          min_val = 0,
+                          reverse = True,
+                          range_mode = RotaryIRQ.RANGE_UNBOUNDED)
 
 #pinSpeedMeterA = Pin(17, mode=Pin.IN)
 #pinSpeedMeterB = Pin(16, mode=Pin.IN)
 
 pinENLoadMotor = Pin(9, mode=Pin.OUT)
 pwmLoadMotor = PWM(pinENLoadMotor)
-pwmLoadMotor.freq (100)
+pwmLoadMotor.freq (500)
 
 
 ##Variables-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -64,15 +68,11 @@ ballDT = 0
 phiReady = False
 rotaryDT = 0
 
-def rotaryGetValue():
-    global rotaryDT
-    temp = rotaryDT
-    rotaryDT = 0
-    return temp
+
 
 ##Movement-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-async def calibrateAngling():
-    global currentPhiTicks,rotaryDT
+def calibrateAngling():
+    global currentPhiTicks
     pinAngleMotorA.low()
     pinAngleMotorB.high()
     
@@ -86,7 +86,7 @@ async def calibrateAngling():
     pinAngleMotorB.low()
     
     currentPhiTicks = 0
-    rotaryDT = 0
+    anglingRotary.reset()
     
 def movePhiTicks(val):
     global currentPhiTicks,phiReady,rotaryDT
@@ -95,85 +95,82 @@ def movePhiTicks(val):
     pinAngleMotorB.low()
     print("val",val)
     movedAmount = 0
+    anglingRotary.reset()
     if(val>0):
         while(movedAmount < val):
             pinAngleMotorA.high()
             pinAngleMotorB.low()
-            movedAmount += rotaryGetValue()
-            print(movedAmount)
-            utime.sleep_ms(1)
+            movedAmount += anglingRotary.value()
+            anglingRotary.reset()
+            #print(movedAmount)
             
     else:
         while(movedAmount > val):
             pinAngleMotorA.low()
             pinAngleMotorB.high()
-            movedAmount += -rotaryGetValue()
-            print(movedAmount)
-            utime.sleep_ms(1)
+            movedAmount += -anglingRotary.value()
+            anglingRotary.reset()
+            #print(movedAmount)
 
     currentPhiTicks += movedAmount
     pinAngleMotorA.low()
     pinAngleMotorB.low()
     phiReady = True
     return
-async def setPhiTicks(ticks): #cmloc : position in CM
+def setPhiTicks(ticks): #cmloc : position in CM
     movePhiTicks(ticks-currentPhiTicks)
     return
 
 
 async def setTheta(theta):
-    pass
+    global currentTheta
+    if(theta < currentTheta):
+        for i in range(currentTheta-1,theta+1,-1):
+            servo.goto(i);
+            await asyncio.sleep(0.2)
+    else:
+        for i in range(currentTheta+1,theta+1,1):
+            servo.goto(i)
+            await asyncio.sleep(0.2)
+    currentTheta = theta
 
     
-async def unload():
+def unload():
     pinLoadMotorA.low()
     pinLoadMotorB.high()
     
     print("unloading")
     
     for i in range(2000):
-        if not pinLoadSwitchUnload.value():
+        if pinLoadSwitchB.value():
             break
-        utime.sleep_ms(1)
+        await asyncio.sleep(0.001)
     
     print("unloading done")
-    
-    pinLoadMotorA.high()## This is to prevent overshoot
-    pinLoadMotorB.low()
-    utime.sleep_ms(50)
-    
     pinLoadMotorA.low()
     pinLoadMotorB.low()
     
-    return
     
-async def load():
+def load():
     pinLoadMotorA.high()
     pinLoadMotorB.low()
     print("loading")
     
     
     for i in range(2000):
-        if  pinLoadSwitchLoad.value():
+        if not pinLoadSwitchA.value():
             break
-        utime.sleep_ms(1)
+        await asyncio.sleep(0.001)
     
     print("loading done")
-    
-    pinLoadMotorA.low()## This is to prevent overshoot
-    pinLoadMotorB.high()
-    utime.sleep_ms(100)
-    
     pinLoadMotorA.low()
     pinLoadMotorB.low()
     
-    return
-    
-async def initMotors():
+def initMotors():
     pwmLaunchMotorR.duty_u16(2500) ## 10%
     pwmLaunchMotorL.duty_u16(2500) ## 10%
     
-    pwmLoadMotor.duty_u16(25000)
+    pwmLoadMotor.duty_u16(30000)
     
     pinLoadMotorA.low()
     pinLoadMotorB.low()
@@ -183,9 +180,9 @@ async def initMotors():
     
     #servo.goto(60)
     
-    asyncio.create_task(calibrateAngling())
+    calibrateAngling()
     
-    asyncio.create_task(unload())
+    unload()
     
 
     
@@ -222,18 +219,12 @@ def leftRPMMeterIRQ(pin):
     LTRPMLIRQ = curr
     
 
-def rotaryUpdate(pin):
-    global rotaryDT
-    if(not pinRotaryA.value()) and (not pinRotaryB.value()):
-        rotaryDT += 1
     
 pinRPMMeterR.irq(trigger=Pin.IRQ_FALLING, handler=rightRPMMeterIRQ)
 
 pinRPMMeterL.irq(trigger=Pin.IRQ_FALLING, handler=leftRPMMeterIRQ)
 
-pinRotaryA.irq(trigger=Pin.IRQ_FALLING, handler=rotaryUpdate)
 
-pinRotaryB.irq(trigger=Pin.IRQ_FALLING, handler=rotaryUpdate)
 
 
 
@@ -306,6 +297,15 @@ async def serve_client(reader, writer):
         return
             
             
+    elif (requestAddress == '/getPWMA'):
+        print(str(PWMA))
+        writer.write('HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\n')
+        await writer.drain()
+        writer.write(str(PWMA))
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+        return
     
     elif (requestAddress == '/getStats'):
         writer.write('HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
@@ -327,9 +327,10 @@ async def serve_client(reader, writer):
         
         PWML = int(j["pwml"])
         PWMR = int(j["pwmr"])
-        asyncio.run(setTheta(int(j["theta"])))
-        asyncio.run(setPhiTicks(int(j["phiTicks"])))
-
+        setTheta(int(j["theta"]))
+        setPhiTicks(int(j["phiTicks"]))
+        #currentPhiTicks = int(j["phiTicks"])
+        print(currentPhiTicks)
         pwmLaunchMotorR.duty_u16(PWMR)
         pwmLaunchMotorL.duty_u16(PWML)
         
@@ -342,11 +343,9 @@ async def serve_client(reader, writer):
     
     elif (requestAddress == '/shoot'):
         
-        asyncio.run(load())
-        asyncio.run(unload())
-
-        writer.close()
-        await writer.wait_closed()
+        await load()
+        await unload()
+        
         return
     
     
@@ -359,23 +358,30 @@ async def serve_client(reader, writer):
     
     return
 
-##Init-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-wap = network.WLAN(network.AP_IF)
-wap.config(essid='Tennis Robot', password='deeznutz')
-wap.active(True)
-print(wap.ifconfig())
-print('Setting up webserver...')
 
-async def net_and_gui():
+##Init-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+async def main():
+    wap = network.WLAN(network.AP_IF)
+
+    wap.config(essid='Tennis Robot', password='deeznutz')
+
+    wap.active(True)
+
+    print(wap.ifconfig())
+    print('Setting up webserver...')
     asyncio.create_task(asyncio.start_server(serve_client, "0.0.0.0", 80))
+    
+ 
+    initMotors()
     while True:
-        await asyncio.sleep(1)
+   
+        print(anglingRotary.value())
+        await asyncio.sleep(0.5)
 
 # Create an Event Loop
 loop = asyncio.get_event_loop()
 # Create a task to run the main function
-loop.create_task(net_and_gui())
-asyncio.create_task(initMotors())
+loop.create_task(main())
 
 try:
     # Run the event loop indefinitely
@@ -384,4 +390,3 @@ except Exception as e:
     print('Error occured: ', e)
 except KeyboardInterrupt:
     print('Program Interrupted by the user')
-
