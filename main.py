@@ -25,15 +25,15 @@ pinAngleMotorB = Pin(3, mode=Pin.OUT)
 #pinServo = Pin(6, mode=Pin.OUT)
 #pwmServo = PWM(pinServo)
 #pwmLaunchMotorL.freq (50)
-servo = Servo(pin=16)
+servo = Servo(pin=9)
 
 pinLaunchMotorL = Pin(10, mode=Pin.OUT)
 pwmLaunchMotorL = PWM(pinLaunchMotorL)
-pwmLaunchMotorL.freq (100)
+pwmLaunchMotorL.freq (800)
 
 pinLaunchMotorR = Pin(11, mode=Pin.OUT)
 pwmLaunchMotorR = PWM(pinLaunchMotorR)
-pwmLaunchMotorR.freq (100)
+pwmLaunchMotorR.freq (800)
 
 
 
@@ -49,9 +49,13 @@ pinRotaryB = Pin(13, Pin.IN, Pin.PULL_UP)
 #pinSpeedMeterA = Pin(17, mode=Pin.IN)
 #pinSpeedMeterB = Pin(16, mode=Pin.IN)
 
-pinENLoadMotor = Pin(9, mode=Pin.OUT)
+pinENLoadMotor = Pin(17, mode=Pin.OUT)
 pwmLoadMotor = PWM(pinENLoadMotor)
 pwmLoadMotor.freq (100)
+
+pinENAnglingMotor = Pin(16, mode=Pin.OUT)
+pwmAnglingMotor = PWM(pinENAnglingMotor)
+pwmAnglingMotor.freq (100)
 
 
 ##Variables-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -63,6 +67,7 @@ ballSpeed = 0
 ballDT = 0
 phiReady = False
 rotaryDT = 0
+rotaryState = 0
 
 def rotaryGetValue():
     global rotaryDT
@@ -95,22 +100,26 @@ def movePhiTicks(val):
     pinAngleMotorB.low()
     print("val",val)
     movedAmount = 0
+    
     if(val>0):
+        pinAngleMotorA.high()
+        pinAngleMotorB.low()
         while(movedAmount < val):
-            pinAngleMotorA.high()
-            pinAngleMotorB.low()
+            rotaryUpdate()
             movedAmount += rotaryGetValue()
             print(movedAmount)
             utime.sleep_ms(1)
             
     else:
+        pinAngleMotorA.low()
+        pinAngleMotorB.high()
         while(movedAmount > val):
-            pinAngleMotorA.low()
-            pinAngleMotorB.high()
-            movedAmount += -rotaryGetValue()
+            rotaryUpdate()
+            movedAmount += rotaryGetValue()
             print(movedAmount)
             utime.sleep_ms(1)
-
+            
+    print(movedAmount)
     currentPhiTicks += movedAmount
     pinAngleMotorA.low()
     pinAngleMotorB.low()
@@ -122,7 +131,7 @@ async def setPhiTicks(ticks): #cmloc : position in CM
 
 
 async def setTheta(theta):
-    pass
+     servo.goto(theta)
 
     
 async def unload():
@@ -138,9 +147,9 @@ async def unload():
     
     print("unloading done")
     
-    pinLoadMotorA.high()## This is to prevent overshoot
-    pinLoadMotorB.low()
-    utime.sleep_ms(50)
+    #pinLoadMotorA.high()## This is to prevent overshoot
+    #pinLoadMotorB.low()
+    #utime.sleep_ms(50)
     
     pinLoadMotorA.low()
     pinLoadMotorB.low()
@@ -173,7 +182,8 @@ async def initMotors():
     pwmLaunchMotorR.duty_u16(2500) ## 10%
     pwmLaunchMotorL.duty_u16(2500) ## 10%
     
-    pwmLoadMotor.duty_u16(25000)
+    pwmLoadMotor.duty_u16(45000)
+    pwmAnglingMotor.duty_u16(65000)
     
     pinLoadMotorA.low()
     pinLoadMotorB.low()
@@ -181,7 +191,7 @@ async def initMotors():
     pinAngleMotorA.low()
     pinAngleMotorB.low()
     
-    #servo.goto(60)
+    servo.goto(30)
     
     asyncio.create_task(calibrateAngling())
     
@@ -222,18 +232,42 @@ def leftRPMMeterIRQ(pin):
     LTRPMLIRQ = curr
     
 
-def rotaryUpdate(pin):
-    global rotaryDT
-    if(not pinRotaryA.value()) and (not pinRotaryB.value()):
-        rotaryDT += 1
+def rotaryUpdate():
+    global rotaryDT,rotaryState
+    rotaryAValue = pinRotaryA.value()
+    rotaryBValue = pinRotaryB.value()
+    if(rotaryState == 0):
+        if(not rotaryAValue):
+            rotaryState = 1
+        elif(not rotaryBValue):
+            rotaryState = 4
+    elif(rotaryState == 1):
+        if(not rotaryBValue):
+            rotaryState = 2
+    elif(rotaryState == 2):
+        if(rotaryAValue):
+            rotaryState = 3
+    elif(rotaryState == 3):
+        if(rotaryAValue and rotaryBValue):
+            rotaryState = 0;
+            rotaryDT += 1
+    elif(rotaryState == 4):
+        if(not rotaryAValue):
+            rotaryState = 5
+    elif(rotaryState == 5):
+        if(rotaryBValue):
+            rotaryState = 6
+    elif(rotaryState == 6):
+        if(rotaryAValue and rotaryBValue):
+            rotaryState = 0
+            rotaryDT -= 1
+            
+        
     
 pinRPMMeterR.irq(trigger=Pin.IRQ_FALLING, handler=rightRPMMeterIRQ)
 
 pinRPMMeterL.irq(trigger=Pin.IRQ_FALLING, handler=leftRPMMeterIRQ)
 
-pinRotaryA.irq(trigger=Pin.IRQ_FALLING, handler=rotaryUpdate)
-
-pinRotaryB.irq(trigger=Pin.IRQ_FALLING, handler=rotaryUpdate)
 
 
 
@@ -333,8 +367,7 @@ async def serve_client(reader, writer):
         pwmLaunchMotorR.duty_u16(PWMR)
         pwmLaunchMotorL.duty_u16(PWML)
         
-        writer.write('HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\nok')
-        await writer.drain()
+
         writer.close()
         await writer.wait_closed()
         
@@ -376,6 +409,7 @@ loop = asyncio.get_event_loop()
 # Create a task to run the main function
 loop.create_task(net_and_gui())
 asyncio.create_task(initMotors())
+#asyncio.create_task(rotaryUpdate())
 
 try:
     # Run the event loop indefinitely
