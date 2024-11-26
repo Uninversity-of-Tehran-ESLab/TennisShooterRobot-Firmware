@@ -69,6 +69,14 @@ phiReady = False
 rotaryDT = 0
 rotaryState = 0
 
+LTRPMRIRQ = time.ticks_us()
+RPMRIRQ = 0
+
+LTRPMLIRQ = time.ticks_us()
+RPMLIRQ = 0
+
+LMotorCalData = []
+RMotorCalData = []
 def rotaryGetValue():
     global rotaryDT
     temp = rotaryDT
@@ -123,7 +131,7 @@ def movePhiTicks(val):
     currentPhiTicks += movedAmount
     pinAngleMotorA.low()
     pinAngleMotorB.low()
-    phiReady = True
+    phiReady = True 
     return
 async def setPhiTicks(ticks): #cmloc : position in CM
     movePhiTicks(ticks-currentPhiTicks)
@@ -198,17 +206,27 @@ async def initMotors():
     asyncio.create_task(unload())
     
 
+async def calibrateRPM():
+    global LMotorCalData, RMotorCalData
+    steps = 1000
+    timeToWait = 1000
+    LMotorCalData.clear()
+    RMotorCalData.clear()
+    for pwm in range(0,65536,steps):
+        pwmLaunchMotorL.duty_u16(pwm)
+        pwmLaunchMotorR.duty_u16(pwm)
+        utime.sleep_ms(timeToWait)
+        LMotorCalData.append((pwm,RPMLIRQ))
+        RMotorCalData.append((pwm,RPMRIRQ))
+    return
+        
     
     
     
     
 
 ##Speed and RPM Sensors-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-LTRPMRIRQ = time.ticks_us()
-RPMRIRQ = 0
 
-LTRPMLIRQ = time.ticks_us()
-RPMLIRQ = 0
 
 
 def rightRPMMeterIRQ(pin):
