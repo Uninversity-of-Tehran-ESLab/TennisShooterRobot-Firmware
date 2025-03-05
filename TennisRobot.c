@@ -58,7 +58,9 @@
 
 
 int currentTheta = 0;
+int requestedTheta = 0;
 int currentPhiTicks = 0;
+int requestedPhiTicks = 0;
 unsigned short PWMR = 0;
 unsigned short PWML = 0;
 unsigned int ballSpeed = 0;
@@ -69,13 +71,16 @@ unsigned int rotaryState = 0;
 
 uint32_t LTRPMRIRQ  = 0;
 unsigned int RPMR = 0;
+unsigned int requestedRPMR = 0;
 
 uint32_t LTRPMLIRQ  = 0;
 unsigned int RPML = 0;
+unsigned int requestedRPML = 0;
 
 
-TaskHandle_t webuiSetupTask,initMechsTask,updMechsTask,calibrateHAngleTask,setVAngleTask,setLMotorSpeed,setRMotorSpeed,loadTask,unloadTask,shootTask;
+TaskHandle_t webuiSetupTask,initMechsTask,updMechsTask,calibrateHAngleTask,moveHAngleTask,setVAngleTask,setLMotorSpeed,setRMotorSpeed,loadTask,unloadTask,shootTask;
 
+ 
 uint32_t rotaryGetValue()
 {
     uint32_t temp = rotaryDT;
@@ -102,6 +107,49 @@ static void calibrateAngling(__unused void *params)
     
     currentPhiTicks = 0;
     rotaryGetValue();
+
+    vTaskDelete(NULL);
+}
+
+
+void movePhiTicks(int val){
+
+    printf("moving phi ticks begin\n");
+    //int val = *((int*)params);
+    gpio_put(PIN_ANGLE_MOTOR_A,0);
+    gpio_put(PIN_ANGLE_MOTOR_B,0);
+
+    //Forward => +rotate
+    int movedAmount = 0;
+    rotaryGetValue();//Zero rotary
+    if(val>0){
+        gpio_put(PIN_ANGLE_MOTOR_A,1);
+        gpio_put(PIN_ANGLE_MOTOR_B,0);
+        while((movedAmount < val)/* && gpio_get(PIN_ANGLE_SWITCH)*/){
+            movedAmount += rotaryGetValue();   
+            printf("forward : %d \n",movedAmount);
+        }
+    }
+    else //Backward => -rotate
+    {
+        gpio_put(PIN_ANGLE_MOTOR_A,0);
+        gpio_put(PIN_ANGLE_MOTOR_B,1);
+        while((movedAmount > val) && gpio_get(PIN_ANGLE_SWITCH)){
+            movedAmount += rotaryGetValue(); 
+            printf("backward : %d \n",movedAmount);
+        }
+    }
+    currentPhiTicks += movedAmount;
+    gpio_put(PIN_ANGLE_MOTOR_A,0);
+    gpio_put(PIN_ANGLE_MOTOR_B,0);
+    printf("moving phi ticks done\n");
+    vTaskDelete(NULL);
+}
+
+void setPhiTicks(void* params)
+{
+    int dest = *(int*) params;
+    movePhiTicks(dest-currentPhiTicks);
 }
 
 static void unload(__unused void *params)
@@ -128,7 +176,7 @@ static void unload(__unused void *params)
     gpio_put(PIN_LOAD_MOTOR_A,0);
     gpio_put(PIN_LOAD_MOTOR_B,0);
     
-    
+    vTaskDelete(NULL);
 }
 
 static void load(__unused void *params)
@@ -156,6 +204,8 @@ static void load(__unused void *params)
     
     gpio_put(PIN_LOAD_MOTOR_A,0);
     gpio_put(PIN_LOAD_MOTOR_B,0);
+
+    vTaskDelete(NULL);
 }
 
 static void shoot(__unused void *params)
@@ -187,7 +237,7 @@ static void shoot(__unused void *params)
 
 
 
-gpio_put(PIN_LOAD_MOTOR_A,0);
+    gpio_put(PIN_LOAD_MOTOR_A,0);
     gpio_put(PIN_LOAD_MOTOR_B,0);
     vTaskDelay(50);
 
@@ -222,7 +272,7 @@ gpio_put(PIN_LOAD_MOTOR_A,0);
 void rotaryUpdate(){
     bool rotaryAValue = gpio_get(PIN_ROTARY_A);
     bool rotaryBValue = gpio_get(PIN_ROTARY_B);
-
+    //printf("%d \n",rotaryDT);
     switch (rotaryState)
     {
         case 0:
@@ -274,24 +324,41 @@ static void init_mechanics(__unused void *params)
     PWML = 3000;
     pwm_set_gpio_level (PIN_LAUNCH_MOTOR_L, PWML);
     pwm_set_gpio_level (PIN_LAUNCH_MOTOR_R, PWMR);
-    pwm_set_gpio_level (PIN_EN_LOAD, 47000);
+    pwm_set_gpio_level (PIN_EN_LOAD, 53000);
+    gpio_put(PIN_ANGLE_MOTOR_A,0);
+    gpio_put(PIN_ANGLE_MOTOR_B,0);
+    //pwm_set_gpio_level (PIN_EN_ANGLE, 47000);
 
     gpio_put(PIN_LOAD_MOTOR_A,0);
     gpio_put(PIN_LOAD_MOTOR_B,0);
 
     xTaskCreate(calibrateAngling,"hAngCal",1024,NULL,tskIDLE_PRIORITY+2, &calibrateHAngleTask);
-    vTaskDelete(NULL);
+
+    //Beep Here
+
+    set_pwm_frequency(PIN_LAUNCH_MOTOR_R,2400);
+    vTaskDelay(500);
+    set_pwm_frequency(PIN_LAUNCH_MOTOR_R,1600);
+    vTaskDelay(500);
+    set_pwm_frequency(PIN_LAUNCH_MOTOR_R,800);
+
+    vTaskDelete(NULL); //Delete these and your life will be hell, nothing wont work especially wifi
 }
 
 
 static void update_values(__unused void *params)
 {
+    PWML = requestedRPML;
+    PWMR = requestedRPMR;
     pwm_set_gpio_level (PIN_LAUNCH_MOTOR_L, (PWML*148));
     printf("LM : %d\n",PWML);
     pwm_set_gpio_level (PIN_LAUNCH_MOTOR_R, (PWMR*148));
     printf("RM : %d\n",PWMR);
-    uint system_clock = clock_get_hz(clk_sys); 
-    printf("pwm sys clk : %d\n", system_clock);
+    //uint system_clock = clock_get_hz(clk_sys); 
+    //printf("pwm sys clk : %d\n", system_clock);
+    currentTheta = requestedTheta;
+    xTaskCreate(setPhiTicks,"hAngMove",1024,&requestedPhiTicks,tskIDLE_PRIORITY+2, &moveHAngleTask);
+
     vTaskDelete(NULL);
 }
 
@@ -328,7 +395,7 @@ static void http_req(http_request_t *req)
             const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
             send(req->incoming_sock,st ,sizeof(st)-1, 0);
             //rpml=3&rpmr=2&theta=1&phi=4
-            sscanf(req->content,"rpml=%hu&rpmr=%hu&theta=%i&phi=%i",&PWML,&PWMR,&currentTheta,&currentPhiTicks);
+            sscanf(req->content,"rpml=%hu&rpmr=%hu&theta=%i&phi=%i",&requestedRPML,&requestedRPMR,&requestedTheta,&requestedPhiTicks);
             xTaskCreate(update_values,"mechsUpd",1024,NULL,tskIDLE_PRIORITY+2, &updMechsTask);
             return;
     }
@@ -394,6 +461,12 @@ void gpio_callback(uint gpio, uint32_t events) {
             return;
         RPMR = 60000/(4*dt);
     }
+
+    if(gpio == PIN_ROTARY_A || gpio == PIN_ROTARY_B)
+    {
+        rotaryUpdate();
+    }
+
 }
 
 void set_pwm_frequency(uint pin, uint freq) {
@@ -485,6 +558,9 @@ int main()
 
     gpio_set_irq_enabled_with_callback(PIN_RPM_METER_L, GPIO_IRQ_EDGE_RISE , true, &gpio_callback);
     gpio_set_irq_enabled(PIN_RPM_METER_R, GPIO_IRQ_EDGE_RISE, true);
+    gpio_set_irq_enabled(PIN_ROTARY_A,  GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
+    gpio_set_irq_enabled(PIN_ROTARY_B,  GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
+    
 
 
     gpio_put(PIN_LOAD_MOTOR_A,0);
