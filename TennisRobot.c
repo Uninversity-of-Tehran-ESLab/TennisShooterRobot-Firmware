@@ -80,8 +80,25 @@ unsigned int requestedRPML = 0;
 
 TaskHandle_t webuiSetupTask,initMechsTask,updMechsTask,calibrateHAngleTask,moveHAngleTask,setVAngleTask,setLMotorSpeed,setRMotorSpeed,loadTask,unloadTask,shootTask;
 
+
+void set_pwm_frequency(uint pin, uint freq) {
+
+    uint slice_num = pwm_gpio_to_slice_num(pin);
+
+    
+    uint system_clock = clock_get_hz(clk_sys); 
+    printf("pwm sys clk : %d", system_clock);
+    uint wrap = system_clock/(10*freq);
+
+    pwm_set_wrap(slice_num, wrap);
+
+    pwm_set_clkdiv(slice_num, 10.0f);
+
+    pwm_set_enabled(slice_num, true);
+}
+
  
-uint32_t rotaryGetValue()
+uint32_t rotaryGetValue() 
 {
     uint32_t temp = rotaryDT;
     rotaryDT = 0;
@@ -467,22 +484,6 @@ void gpio_callback(uint gpio, uint32_t events) {
         rotaryUpdate();
     }
 
-}
-
-void set_pwm_frequency(uint pin, uint freq) {
-
-    uint slice_num = pwm_gpio_to_slice_num(pin);
-
-    
-    uint system_clock = clock_get_hz(clk_sys); 
-    printf("pwm sys clk : %d", system_clock);
-    uint wrap = 37896;
-
-    pwm_set_wrap(slice_num, wrap);
-
-    pwm_set_clkdiv(slice_num, 1.0f);
-
-    pwm_set_enabled(slice_num, true);
 }
 
 int main()
