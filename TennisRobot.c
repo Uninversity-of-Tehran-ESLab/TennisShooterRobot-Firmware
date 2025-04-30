@@ -43,6 +43,7 @@
 #define PIN_ANGLE_MOTOR_B 3
 
 #define PIN_LAUNCH_MOTOR_L 10
+
 #define PIN_LAUNCH_MOTOR_R 11
 
 #define PIN_ROTARY_A 12
@@ -85,14 +86,16 @@ void set_pwm_frequency(uint pin, uint freq) {
 
     uint slice_num = pwm_gpio_to_slice_num(pin);
 
-    
     uint system_clock = clock_get_hz(clk_sys); 
     printf("pwm sys clk : %d", system_clock);
-    uint wrap = system_clock/(10*freq);
 
-    pwm_set_wrap(slice_num, wrap);
 
-    pwm_set_clkdiv(slice_num, 10.0f);
+    float div = ((float)system_clock/(1<<16))/((float)freq);
+    pwm_set_phase_correct(slice_num,false);
+
+    pwm_set_clkdiv_mode(slice_num,PWM_DIV_FREE_RUNNING);
+
+    pwm_set_clkdiv(slice_num, div);
 
     pwm_set_enabled(slice_num, true);
 }
@@ -349,7 +352,7 @@ static void init_mechanics(__unused void *params)
     gpio_put(PIN_LOAD_MOTOR_A,0);
     gpio_put(PIN_LOAD_MOTOR_B,0);
 
-    xTaskCreate(calibrateAngling,"hAngCal",1024,NULL,tskIDLE_PRIORITY+2, &calibrateHAngleTask);
+    //xTaskCreate(calibrateAngling,"hAngCal",1024,NULL,tskIDLE_PRIORITY+2, &calibrateHAngleTask);
 
     //Beep Here
 
@@ -367,9 +370,9 @@ static void update_values(__unused void *params)
 {
     PWML = requestedRPML;
     PWMR = requestedRPMR;
-    pwm_set_gpio_level (PIN_LAUNCH_MOTOR_L, (PWML*148));
+    pwm_set_gpio_level (PIN_LAUNCH_MOTOR_L, (PWML));
     printf("LM : %d\n",PWML);
-    pwm_set_gpio_level (PIN_LAUNCH_MOTOR_R, (PWMR*148));
+    pwm_set_gpio_level (PIN_LAUNCH_MOTOR_R, (PWMR));
     printf("RM : %d\n",PWMR);
     //uint system_clock = clock_get_hz(clk_sys); 
     //printf("pwm sys clk : %d\n", system_clock);
