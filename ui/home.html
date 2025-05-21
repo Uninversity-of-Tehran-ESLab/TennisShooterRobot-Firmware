@@ -226,6 +226,20 @@
           </div>
         </div>
 
+        <div class="col">
+          <div class="card">
+            <div class="card-header">
+              Manual Rotation
+            </div>
+            <div class="card-body">
+              
+                <button type="button" id="hLeftBtn" class="btn btn-primary btn-lg">Left</button>
+                <button type="button" id="hRightBtn" class="btn btn-primary btn-lg">Right</button>
+              
+            </div>
+          </div>
+        </div>
+
 
       </div>
 
@@ -273,6 +287,44 @@
           success: function (data, status) {
             console.log("Data: " + data + "\nStatus: " + status);
             updateStat();
+          }
+        });
+      });
+
+      $("#hLeftBtn").click(function () {
+        
+        console.log("Datwodkawopdk");
+        $.ajax({
+          url: "/hLeft",
+          type: "POST",
+          data: JSON.stringify(
+           {
+         
+          }),
+          contentType: "application/json; charset=utf-8",
+          dataType: "json",
+          success: function (data, status) {
+            console.log("Data: " + data + "\nStatus: " + status);
+      
+          }
+        });
+      });
+
+      $("#hRightBtn").click(function () {
+        
+        console.log("Datwodkawopdk");
+        $.ajax({
+          url: "/hRight",
+          type: "POST",
+          data: JSON.stringify(
+           {
+         
+          }),
+          contentType: "application/json; charset=utf-8",
+          dataType: "json",
+          success: function (data, status) {
+            console.log("Data: " + data + "\nStatus: " + status);
+     
           }
         });
       });

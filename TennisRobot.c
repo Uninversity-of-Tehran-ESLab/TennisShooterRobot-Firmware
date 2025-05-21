@@ -56,6 +56,8 @@
 #define PIN_EN_LOAD 17
 #define PIN_EN_ANGLE 16
 
+#define PIN_H_A 18
+#define PIN_H_B 19
 
 
 int currentTheta = 0;
@@ -228,6 +230,29 @@ static void load(__unused void *params)
     vTaskDelete(NULL);
 }
 
+
+static void hLeft(__unused void *params)
+{
+    gpio_put(PIN_H_A,0);
+    gpio_put(PIN_H_B,1);
+
+    vTaskDelay(100);
+
+    gpio_put(PIN_H_A,0);
+    gpio_put(PIN_H_B,0);
+    vTaskDelete(NULL);
+}
+static void hRight(__unused void *params)
+{
+    gpio_put(PIN_H_A,1);
+    gpio_put(PIN_H_B,0);
+
+    vTaskDelay(100);
+
+    gpio_put(PIN_H_A,0);
+    gpio_put(PIN_H_B,0);
+    vTaskDelete(NULL);
+}
 static void shoot(__unused void *params)
 {
     
@@ -427,6 +452,22 @@ static void http_req(http_request_t *req)
             xTaskCreate(shoot,"shoot",1024,NULL,tskIDLE_PRIORITY+2, &shootTask);
             return;
     }
+    else if(strcmp(req->taget,"/hLeft")  == 0)
+    {
+            const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
+            send(req->incoming_sock,st ,sizeof(st)-1, 0);
+            
+            xTaskCreate(hLeft,"hLeft",1024,NULL,tskIDLE_PRIORITY+2, &shootTask);
+            return;
+    }
+    else if(strcmp(req->taget,"/hRight")  == 0)
+    {
+            const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
+            send(req->incoming_sock,st ,sizeof(st)-1, 0);
+            
+            xTaskCreate(hRight,"hRight",1024,NULL,tskIDLE_PRIORITY+2, &shootTask);
+            return;
+    }
     const char st[] = "HTTP/1.0 404 Not Found\r\nContent-type: text/html\r\n\r\nNot Found!";
     send(req->incoming_sock,st ,sizeof(st)-1, 0);
     return;
@@ -506,6 +547,12 @@ int main()
     gpio_init(PIN_RPM_METER_L);
     gpio_set_dir(PIN_RPM_METER_L,GPIO_IN);
     gpio_pull_down(PIN_RPM_METER_L);
+
+    gpio_init(PIN_H_A);
+    gpio_set_dir(PIN_H_A,GPIO_OUT);
+
+    gpio_init(PIN_H_B);
+    gpio_set_dir(PIN_H_B,GPIO_OUT);
 
     gpio_init(PIN_LOAD_MOTOR_A);
     gpio_set_dir(PIN_LOAD_MOTOR_A,GPIO_OUT);
