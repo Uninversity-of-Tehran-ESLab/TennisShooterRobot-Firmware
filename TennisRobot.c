@@ -33,8 +33,8 @@
 #include "task.h"
 
 
-#define PIN_RPM_METER_R 14
-#define PIN_RPM_METER_L 15
+#define PIN_RPM_METER_R 21
+#define PIN_RPM_METER_L 19
 
 #define PIN_LOAD_MOTOR_A 0
 #define PIN_LOAD_MOTOR_B 1
@@ -56,8 +56,8 @@
 #define PIN_EN_LOAD 17
 #define PIN_EN_ANGLE 16
 
-#define PIN_H_A 18
-#define PIN_H_B 19
+#define PIN_H_A 14
+#define PIN_H_B 15
 
 
 int currentTheta = 0;
@@ -198,7 +198,7 @@ static void unload(__unused void *params)
     gpio_put(PIN_LOAD_MOTOR_A,0);
     gpio_put(PIN_LOAD_MOTOR_B,0);
     
-    vTaskDelete(NULL);
+    vTaskDelete(NULL); 
 }
 
 static void load(__unused void *params)
@@ -381,6 +381,9 @@ static void init_mechanics(__unused void *params)
 
     //Beep Here
 
+
+    //xTaskCreate(calibrateAngling,"hAngCal",1024,NULL,tskIDLE_PRIORITY+2, &calibrateHAngleTask);
+
     set_pwm_frequency(PIN_LAUNCH_MOTOR_R,2400);
     vTaskDelay(500);
     set_pwm_frequency(PIN_LAUNCH_MOTOR_R,1600);
@@ -390,11 +393,45 @@ static void init_mechanics(__unused void *params)
     vTaskDelete(NULL); //Delete these and your life will be hell, nothing wont work especially wifi
 }
 
+static void measureRPM(__unused void *params)
+{
+    uint rpml_slice_num = pwm_gpio_to_slice_num(PIN_RPM_METER_L);
+    uint rpmr_slice_num = pwm_gpio_to_slice_num(PIN_RPM_METER_R);
+
+
+    pwm_config cfg = pwm_get_default_config();
+    pwm_config_set_clkdiv_mode(&cfg, PWM_DIV_B_RISING);
+    pwm_config_set_clkdiv(&cfg, 1.0f);
+    pwm_init(rpml_slice_num, &cfg, false);
+    pwm_init(rpmr_slice_num, &cfg, false);
+    gpio_set_function(PIN_RPM_METER_L, GPIO_FUNC_PWM);
+    gpio_set_function(PIN_RPM_METER_R, GPIO_FUNC_PWM);
+    pwm_set_enabled(rpml_slice_num, true);
+    pwm_set_enabled(rpmr_slice_num, true);
+    float rpm;
+    uint16_t pulses;
+
+    while(true)
+    {
+        pwm_set_counter(rpml_slice_num, 0);
+        pwm_set_counter(rpmr_slice_num, 0);
+        vTaskDelay(1000);
+
+        pulses = pwm_get_counter(rpml_slice_num);
+        rpm = (pulses * 60.0f) / 4.0f;
+        RPML = rpm;
+
+        pulses = pwm_get_counter(rpmr_slice_num);
+        rpm = (pulses * 60.0f) / 4.0f;
+        RPMR = rpm;
+    }
+}
+
 
 static void update_values(__unused void *params)
 {
-    PWML = requestedRPML;
-    PWMR = requestedRPMR;
+    PWML = requestedRPML;//PID
+    PWMR = requestedRPMR;//PID 
     pwm_set_gpio_level (PIN_LAUNCH_MOTOR_L, (PWML));
     printf("LM : %d\n",PWML);
     pwm_set_gpio_level (PIN_LAUNCH_MOTOR_R, (PWMR));
@@ -500,28 +537,7 @@ static void setup_webui(__unused void *params)
 }
 
 void gpio_callback(uint gpio, uint32_t events) {
-    if(gpio==PIN_RPM_METER_L){
-        uint32_t curr = to_ms_since_boot(get_absolute_time());
-
-        uint32_t dt = curr - LTRPMLIRQ ;
-        //printf("dt : %d\n", dt);
-        LTRPMLIRQ = curr;
-        if(dt < 100)
-            return;
-        RPML = 60000/(4*dt);
-        //printf("RPML : %d\n", RPML);
-    }
-    
-    if(gpio==PIN_RPM_METER_R)
-    {
-        uint32_t curr = to_ms_since_boot(get_absolute_time());
-
-        uint32_t dt = curr - LTRPMRIRQ ;
-        LTRPMRIRQ = curr;
-        if(dt < 100)
-            return;
-        RPMR = 60000/(4*dt);
-    }
+   
 
     if(gpio == PIN_ROTARY_A || gpio == PIN_ROTARY_B)
     {
@@ -604,12 +620,8 @@ int main()
     gpio_set_dir(PIN_UNLOAD_SWITCH,GPIO_IN);
     gpio_pull_up(PIN_UNLOAD_SWITCH);
 
-    LTRPMRIRQ = to_ms_since_boot(get_absolute_time());
-    LTRPMLIRQ = to_ms_since_boot(get_absolute_time());
 
-    gpio_set_irq_enabled_with_callback(PIN_RPM_METER_L, GPIO_IRQ_EDGE_RISE , true, &gpio_callback);
-    gpio_set_irq_enabled(PIN_RPM_METER_R, GPIO_IRQ_EDGE_RISE, true);
-    gpio_set_irq_enabled(PIN_ROTARY_A,  GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
+    gpio_set_irq_enabled_with_callback(PIN_ROTARY_A,  GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true,&gpio_callback);
     gpio_set_irq_enabled(PIN_ROTARY_B,  GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
     
 
@@ -618,6 +630,7 @@ int main()
     gpio_put(PIN_LOAD_MOTOR_B,0);
     
     xTaskCreate(init_mechanics,"mechsInit",1024,NULL,tskIDLE_PRIORITY+2, &initMechsTask);
+    xTaskCreate(measureRPM,"measRPM",1024,NULL,tskIDLE_PRIORITY+2, &updMechsTask);
     xTaskCreate(setup_webui,"webuiSetup",1024,NULL,tskIDLE_PRIORITY+1, &webuiSetupTask);
     
     vTaskStartScheduler();
