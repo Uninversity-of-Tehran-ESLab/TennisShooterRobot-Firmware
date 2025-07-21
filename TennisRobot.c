@@ -64,8 +64,8 @@ int currentTheta = 0;
 int requestedTheta = 0;
 int currentPhiTicks = 0;
 int requestedPhiTicks = 0;
-unsigned short PWMR = 0;
-unsigned short PWML = 0;
+unsigned short PWMR = 3000;
+unsigned short PWML = 3000;
 unsigned int ballSpeed = 0;
 unsigned int ballDT = 0;
 bool phiReady = false;
@@ -81,11 +81,10 @@ unsigned int RPML = 0;
 unsigned int requestedRPML = 0;
 
 
-TaskHandle_t webuiSetupTask,initMechsTask,updMechsTask,calibrateHAngleTask,moveHAngleTask,setVAngleTask,setLMotorSpeed,setRMotorSpeed,loadTask,unloadTask,shootTask;
+TaskHandle_t webuiSetupTask,initMechsTask,measureRPMTask,updMechsTask,calibrateHAngleTask,moveHAngleTask,setVAngleTask,setLMotorSpeed,setRMotorSpeed,loadTask,unloadTask,shootTask;
 
 
 void set_pwm_frequency(uint pin, uint freq) {
-
     uint slice_num = pwm_gpio_to_slice_num(pin);
 
     uint system_clock = clock_get_hz(clk_sys); 
@@ -365,8 +364,7 @@ void rotaryUpdate(){
 
 static void init_mechanics(__unused void *params)
 {
-    PWMR = 3000;
-    PWML = 3000;
+   
     pwm_set_gpio_level (PIN_LAUNCH_MOTOR_L, PWML);
     pwm_set_gpio_level (PIN_LAUNCH_MOTOR_R, PWMR);
     pwm_set_gpio_level (PIN_EN_LOAD, 53000);
@@ -415,14 +413,15 @@ static void measureRPM(__unused void *params)
     {
         pwm_set_counter(rpml_slice_num, 0);
         pwm_set_counter(rpmr_slice_num, 0);
-        vTaskDelay(1000);
+        vTaskDelay(5000);
+        //Decide on a minimum rpm to find the minmum time to wait, cant use 5secs with pid
 
         pulses = pwm_get_counter(rpml_slice_num);
-        rpm = (pulses * 60.0f) / 4.0f;
+        rpm = (pulses * 60.0f) / 5.0f;
         RPML = rpm;
 
         pulses = pwm_get_counter(rpmr_slice_num);
-        rpm = (pulses * 60.0f) / 4.0f;
+        rpm = (pulses * 60.0f) / 5.0f;
         RPMR = rpm;
     }
 }
@@ -439,9 +438,9 @@ static void update_values(__unused void *params)
     //uint system_clock = clock_get_hz(clk_sys); 
     //printf("pwm sys clk : %d\n", system_clock);
     currentTheta = requestedTheta;
-    xTaskCreate(setPhiTicks,"hAngMove",1024,&requestedPhiTicks,tskIDLE_PRIORITY+2, &moveHAngleTask);
+    //xTaskCreate(setPhiTicks,"hAngMove",512,&requestedPhiTicks,tskIDLE_PRIORITY+2, &moveHAngleTask);
 
-    vTaskDelete(NULL);
+    vTaskDelete(updMechsTask);
 }
 
 static void http_req(http_request_t *req)
@@ -478,7 +477,7 @@ static void http_req(http_request_t *req)
             send(req->incoming_sock,st ,sizeof(st)-1, 0);
             //rpml=3&rpmr=2&theta=1&phi=4
             sscanf(req->content,"rpml=%hu&rpmr=%hu&theta=%i&phi=%i",&requestedRPML,&requestedRPMR,&requestedTheta,&requestedPhiTicks);
-            xTaskCreate(update_values,"mechsUpd",1024,NULL,tskIDLE_PRIORITY+2, &updMechsTask);
+            xTaskCreate(update_values,"mechsUpd",512,NULL,tskIDLE_PRIORITY+2, &updMechsTask);
             return;
     }
     else if(strcmp(req->taget,"/shoot")  == 0)
@@ -486,7 +485,7 @@ static void http_req(http_request_t *req)
             const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
             send(req->incoming_sock,st ,sizeof(st)-1, 0);
             
-            xTaskCreate(shoot,"shoot",1024,NULL,tskIDLE_PRIORITY+2, &shootTask);
+            xTaskCreate(shoot,"shoot",512,NULL,tskIDLE_PRIORITY+2, &shootTask);
             return;
     }
     else if(strcmp(req->taget,"/hLeft")  == 0)
@@ -494,7 +493,7 @@ static void http_req(http_request_t *req)
             const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
             send(req->incoming_sock,st ,sizeof(st)-1, 0);
             
-            xTaskCreate(hLeft,"hLeft",1024,NULL,tskIDLE_PRIORITY+2, &shootTask);
+            xTaskCreate(hLeft,"hLeft",512,NULL,tskIDLE_PRIORITY+2, &shootTask);
             return;
     }
     else if(strcmp(req->taget,"/hRight")  == 0)
@@ -502,7 +501,7 @@ static void http_req(http_request_t *req)
             const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
             send(req->incoming_sock,st ,sizeof(st)-1, 0);
             
-            xTaskCreate(hRight,"hRight",1024,NULL,tskIDLE_PRIORITY+2, &shootTask);
+            xTaskCreate(hRight,"hRight",512,NULL,tskIDLE_PRIORITY+2, &shootTask);
             return;
     }
     const char st[] = "HTTP/1.0 404 Not Found\r\nContent-type: text/html\r\n\r\nNot Found!";
@@ -529,7 +528,7 @@ static void setup_webui(__unused void *params)
     dns_server_init(&dns_server, &addr);
 
     http_server_t http_server;
-    http_init(&http_server,http_req,80);
+    http_init(&http_server,http_req, 80);
 
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
 
@@ -585,7 +584,7 @@ int main()
     gpio_init(PIN_LAUNCH_MOTOR_L);
     gpio_set_dir(PIN_LAUNCH_MOTOR_L,GPIO_OUT);
     gpio_set_function(PIN_LAUNCH_MOTOR_L,GPIO_FUNC_PWM);
-    set_pwm_frequency(PIN_LAUNCH_MOTOR_L,800);
+    set_pwm_frequency(PIN_LAUNCH_MOTOR_L,800);//maybe trye 30K someday
 
     gpio_init(PIN_LAUNCH_MOTOR_R);
     gpio_set_dir(PIN_LAUNCH_MOTOR_R,GPIO_OUT);
@@ -598,9 +597,7 @@ int main()
     gpio_set_dir(PIN_EN_LOAD,GPIO_OUT);
     gpio_set_function(PIN_EN_LOAD,GPIO_FUNC_PWM);
 
-    pwm_set_enabled (0, true);// Slice 0 is enable, 0A and 0B are the launch motors
-
-
+  
 
     gpio_init(PIN_ROTARY_A);
     gpio_set_dir(PIN_ROTARY_A,GPIO_IN); //We might wanna pull up these, gotta check
@@ -629,8 +626,8 @@ int main()
     gpio_put(PIN_LOAD_MOTOR_A,0);
     gpio_put(PIN_LOAD_MOTOR_B,0);
     
-    xTaskCreate(init_mechanics,"mechsInit",1024,NULL,tskIDLE_PRIORITY+2, &initMechsTask);
-    xTaskCreate(measureRPM,"measRPM",1024,NULL,tskIDLE_PRIORITY+2, &updMechsTask);
+    xTaskCreate(init_mechanics,"mechsInit",512,NULL,tskIDLE_PRIORITY+2, &initMechsTask);
+    xTaskCreate(measureRPM,"measRPM",512,NULL,tskIDLE_PRIORITY+2, &measureRPMTask);
     xTaskCreate(setup_webui,"webuiSetup",1024,NULL,tskIDLE_PRIORITY+1, &webuiSetupTask);
     
     vTaskStartScheduler();
