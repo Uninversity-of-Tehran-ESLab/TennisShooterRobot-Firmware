@@ -129,8 +129,8 @@ void http_init(http_server_t * server, CallbackFunction_t callback,unsigned shor
         printf("Unable to listen on socket: error\n");
         return;
     }
-  
-
-    xTaskCreate(http_serve,"httpServer",2048,server,tskIDLE_PRIORITY+2, &(server->server_task));
+    
+   
+    xTaskCreate(http_serve,"httpServer",2048,server,tskIDLE_PRIORITY+5, &(server->server_task));
     return;
 }

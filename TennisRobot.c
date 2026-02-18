@@ -60,6 +60,7 @@
 #define PIN_H_ANG_SENS_SDA 2
 #define PIN_H_ANG_SENS_SCL 3
 #define H_ANG_SENS_ADDR 0x36
+#define H_ANG_SENS_I2C i2c1
 
 
 #define PIN_H_A 27
@@ -238,14 +239,24 @@ static void load(__unused void *params)
 
 static void h_ang_loop(__unused void *params)
 {
-    int ret;
-    uint8_t rxdata;
+    int ret = 0;
+    uint8_t rxdata[2] = {0};
+    uint8_t txdata[] = {0x0C};
+  
+    gpio_put(PIN_H_A,0);
+    gpio_put(PIN_H_B,0);
     while(true){
-        gpio_put(PIN_H_A,0);
-        gpio_put(PIN_H_B,0);
-        ret = i2c_read_blocking(i2c_default, H_ANG_SENS_ADDR, &rxdata, 1, false);
-        currentTheta = rxdata;
-        vTaskDelay(10);
+       
+     
+        ret = i2c_write_blocking(H_ANG_SENS_I2C,H_ANG_SENS_ADDR,txdata,1,false);
+        ret = i2c_read_blocking(H_ANG_SENS_I2C, H_ANG_SENS_ADDR, rxdata, 2, false);
+        currentTheta = (rxdata[0] << 8) + rxdata[1] + 1; 
+        currentTheta = currentTheta + 1;
+        if(ret == PICO_ERROR_GENERIC)
+        {
+            currentTheta = 505;
+        }
+        vTaskDelay(100);
     }
     vTaskDelete(NULL);
 }
@@ -525,9 +536,7 @@ static void setup_webui(__unused void *params)
     dns_server_t dns_server;
     dns_server_init(&dns_server, &addr);
 
-    http_server_t http_server;
-    http_init(&http_server,http_req, 80);
-
+    
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
 
     vTaskDelete(NULL);
@@ -542,7 +551,7 @@ void gpio_callback(uint gpio, uint32_t events) {
     }
 
 }
-
+ http_server_t http_server;
 int main()
 {
     stdio_init_all();
@@ -550,7 +559,7 @@ int main()
     gpio_set_dir(22,GPIO_OUT);
     gpio_put(22,0);
 
-    i2c_init(i2c_default, 100 * 1000);
+    i2c_init(H_ANG_SENS_I2C, 100 * 1000);
     gpio_set_function(PIN_H_ANG_SENS_SDA, GPIO_FUNC_I2C);
     gpio_set_function(PIN_H_ANG_SENS_SCL, GPIO_FUNC_I2C);
     gpio_pull_up(PIN_H_ANG_SENS_SDA);
@@ -631,10 +640,16 @@ int main()
     gpio_put(PIN_LOAD_MOTOR_A,0);
     gpio_put(PIN_LOAD_MOTOR_B,0);
     
-    xTaskCreate(init_mechanics,"mechsInit",512,NULL,tskIDLE_PRIORITY+2, &initMechsTask);
-    xTaskCreate(measureRPM,"measRPM",512,NULL,tskIDLE_PRIORITY+2, &measureRPMTask);
-    xTaskCreate(setup_webui,"webuiSetup",1024,NULL,tskIDLE_PRIORITY+1, &webuiSetupTask);
+    //xTaskCreate(init_mechanics,"mechsInit",512,NULL,tskIDLE_PRIORITY+2, &initMechsTask);
+    //xTaskCreate(measureRPM,"measRPM",512,NULL,tskIDLE_PRIORITY+2, &measureRPMTask);
     xTaskCreate(h_ang_loop,"hAngLoop",1024,NULL,tskIDLE_PRIORITY+1, &loopHAngleTask);
+
+
+    xTaskCreate(setup_webui,"webuiSetup",1024,NULL,tskIDLE_PRIORITY+5, &webuiSetupTask);
+    //For some reasons, Creating a task here (after webui task) would result in bad things, including the whole wifi/ap/webserver/dhcp not working.
+   
+    http_init(&http_server,http_req, 80);
+
 
     vTaskStartScheduler();
 

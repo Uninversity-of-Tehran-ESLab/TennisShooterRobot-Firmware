@@ -68,14 +68,17 @@ pico_set_program_version(TennisRobot "0.1")
 
 
 target_compile_definitions(TennisRobot PRIVATE
-        NO_SYS=0)
+        NO_SYS=0
+        PICO_CYW43_ARCH_FREERTOS=1)
 
 # Add the standard library to the build
 target_link_libraries(
         TennisRobot
+
         pico_lwip_freertos
         pico_cyw43_arch_lwip_sys_freertos
         pico_lwip_http
+
         pico_stdlib
         hardware_gpio
         hardware_pwm 

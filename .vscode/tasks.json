@@ -38,7 +38,7 @@
         {
             "label": "Flash",
             "type": "process",
-            "command": "openocd",
+            "command": "${userHome}/.pico-sdk/openocd/0.12.0+dev/openocd",
             "args": [
                 "-s",
                 "${userHome}/.pico-sdk/openocd/0.12.0+dev/scripts",
