@@ -27,7 +27,7 @@
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
 #include "pico/time.h"
-
+#include "hardware/i2c.h"
 #include "hardware/pwm.h"
 
 #include "task.h"
@@ -238,10 +238,13 @@ static void load(__unused void *params)
 
 static void h_ang_loop(__unused void *params)
 {
+    int ret;
+    uint8_t rxdata;
     while(true){
         gpio_put(PIN_H_A,0);
         gpio_put(PIN_H_B,0);
-
+        ret = i2c_read_blocking(i2c_default, H_ANG_SENS_ADDR, &rxdata, 1, false);
+        currentTheta = rxdata;
         vTaskDelay(10);
     }
     vTaskDelete(NULL);
@@ -432,7 +435,7 @@ static void update_values(__unused void *params)
     printf("RM : %d\n",PWMR);
     //uint system_clock = clock_get_hz(clk_sys); 
     //printf("pwm sys clk : %d\n", system_clock);
-    currentTheta = requestedTheta;
+    //currentTheta = requestedTheta;
     //xTaskCreate(setPhiTicks,"hAngMove",512,&requestedPhiTicks,tskIDLE_PRIORITY+2, &moveHAngleTask);
 
     vTaskDelete(updMechsTask);
@@ -483,7 +486,7 @@ static void http_req(http_request_t *req)
             xTaskCreate(shoot,"shoot",512,NULL,tskIDLE_PRIORITY+2, &shootTask);
             return;
     }
-    else if(strcmp(req->taget,"/hLeft")  == 0)
+    /*else if(strcmp(req->taget,"/hLeft")  == 0)
     {
             const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
             send(req->incoming_sock,st ,sizeof(st)-1, 0);
@@ -498,7 +501,7 @@ static void http_req(http_request_t *req)
             
             xTaskCreate(hRight,"hRight",512,NULL,tskIDLE_PRIORITY+2, &shootTask);
             return;
-    }
+    }*/
     const char st[] = "HTTP/1.0 404 Not Found\r\nContent-type: text/html\r\n\r\nNot Found!";
     send(req->incoming_sock,st ,sizeof(st)-1, 0);
     return;
@@ -546,6 +549,12 @@ int main()
     gpio_init(22);
     gpio_set_dir(22,GPIO_OUT);
     gpio_put(22,0);
+
+    i2c_init(i2c_default, 100 * 1000);
+    gpio_set_function(PIN_H_ANG_SENS_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(PIN_H_ANG_SENS_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(PIN_H_ANG_SENS_SDA);
+    gpio_pull_up(PIN_H_ANG_SENS_SCL);
     
     //printf("wait\n");
     set_sys_clock_khz(240000, true);
