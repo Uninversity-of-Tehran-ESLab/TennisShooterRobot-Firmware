@@ -4,6 +4,7 @@
 #include "pico/multicore.h"
 
 
+
 #include "pico/cyw43_arch.h"
 #include "pico/cyw43_driver.h"
 
@@ -16,32 +17,55 @@
 #include "FreeRTOSConfig.h"
 #include "FreeRTOS.h"
 
-
 #include "task.h"
 
 #define HTTPSERVER_MAX_HTTP_LINE_LENGTH 100
 #define HTTPSERVER_MAX_TARGET_LENGTH 50
 #define HTTPSERVER_MAX_CONTENT_LENGTH 1024
+#define HTTPSERVER_MAX_REQUEST_LENGTH 10240
 
+
+enum transaction_state
+{
+    HTTP_REQ_STATE_HEADER = 0,
+    HTTP_REQ_STATE_BODY = 1,
+    HTTP_REQ_STATE_DONE = 2
+};
 
 typedef struct _http_request_t
 {
+
+    size_t header_length;
+    uint8_t* header;
+
     unsigned int content_length;
-    char content[HTTPSERVER_MAX_CONTENT_LENGTH];
-    int incoming_sock;
+    uint8_t* content;
+
     unsigned int target_size;
-    char taget[HTTPSERVER_MAX_TARGET_LENGTH];
+    uint8_t* target;
 } http_request_t;
 
-typedef void (* CallbackFunction_t)( http_request_t * req );
+
+
+typedef void (*HTTP_callback_function_t)(http_request_t *req);
 
 typedef struct _http_server_t
 {
-    CallbackFunction_t callback;
-    int server_sock;
-    TaskHandle_t server_task;
+    HTTP_callback_function_t callback;
+
 } http_server_t;
 
+void http_init(http_server_t *server, HTTP_callback_function_t callback, unsigned short port);
 
+typedef struct 
+{
+    uint8_t request_data[HTTPSERVER_MAX_REQUEST_LENGTH];
+    uint16_t request_length;
+    int id;
+    enum transaction_state state;
+    size_t last_line;
 
-void http_init(http_server_t * server, CallbackFunction_t callback,unsigned short port);
+    http_request_t request;
+
+    http_server_t* server;
+} http_transaction_t;

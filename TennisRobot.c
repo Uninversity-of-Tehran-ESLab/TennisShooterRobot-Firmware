@@ -39,8 +39,8 @@
 #define PIN_LOAD_MOTOR_A 6
 #define PIN_LOAD_MOTOR_B 7
 
-#define PIN_ANGLE_MOTOR_A 0
-#define PIN_ANGLE_MOTOR_B 1
+#define PIN_ANGLE_MOTOR_A 27
+#define PIN_ANGLE_MOTOR_B 26
 
 #define PIN_LAUNCH_MOTOR_L 8
 
@@ -53,7 +53,7 @@
 #define PIN_LOAD_SWITCH 10
 #define PIN_UNLOAD_SWITCH 11
 
-#define PIN_EN_LOAD 17
+#define PIN_EN_LOAD 17//Delete later
 #define PIN_EN_H 16
 
 
@@ -63,8 +63,11 @@
 #define H_ANG_SENS_I2C i2c1
 
 
-#define PIN_H_A 27
-#define PIN_H_B 28
+#define PIN_H_A 17
+#define PIN_H_B 16
+
+#define PIN_UART_DBG_RX 1
+#define PIN_UART_DBG_TX 0
 
 
 int currentTheta = 0;
@@ -95,7 +98,7 @@ void set_pwm_frequency(uint pin, uint freq) {
     uint slice_num = pwm_gpio_to_slice_num(pin);
 
     uint system_clock = clock_get_hz(clk_sys); 
-    printf("pwm sys clk : %d", system_clock);
+    printf("pwm sys clk : %d\n", system_clock);
 
 
     float div = ((float)system_clock/(1<<16))/((float)freq);
@@ -451,7 +454,7 @@ static void update_values(__unused void *params)
 
     vTaskDelete(updMechsTask);
 }
-
+/*
 static void http_req(http_request_t *req)
 {
     if(strcmp(req->taget,"/") == 0)
@@ -512,13 +515,16 @@ static void http_req(http_request_t *req)
             
             xTaskCreate(hRight,"hRight",512,NULL,tskIDLE_PRIORITY+2, &shootTask);
             return;
-    }*/
+    }
     const char st[] = "HTTP/1.0 404 Not Found\r\nContent-type: text/html\r\n\r\nNot Found!";
     send(req->incoming_sock,st ,sizeof(st)-1, 0);
     return;
 }
 
-
+*/
+http_server_t http_server;
+dhcp_server_t dhcp_server;
+dns_server_t dns_server;
 
 static void setup_webui(__unused void *params)
 {
@@ -530,13 +536,17 @@ static void setup_webui(__unused void *params)
 
     ip4_addr_t addr = { .addr = 0x0104A8C0 }, mask = { .addr =  0x00FFFFFF};
     
-    dhcp_server_t dhcp_server;
-
-    dhcp_server_init(&dhcp_server, &addr,&mask);
-    dns_server_t dns_server;
-    dns_server_init(&dns_server, &addr);
-
     
+    printf("setting up dhcp... \n");
+    dhcp_server_init(&dhcp_server, &addr,&mask);
+    vTaskDelay(100);
+ 
+    printf("setting up dns... \n");
+    dns_server_init(&dns_server, &addr);
+    vTaskDelay(100);
+
+    printf("setting up http... \n");
+    http_init(&http_server,NULL, 80);
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
 
     vTaskDelete(NULL);
@@ -551,13 +561,21 @@ void gpio_callback(uint gpio, uint32_t events) {
     }
 
 }
- http_server_t http_server;
 int main()
 {
+    set_sys_clock_khz(240000, true);
     stdio_init_all();
+
     gpio_init(22);
     gpio_set_dir(22,GPIO_OUT);
     gpio_put(22,0);
+    printf("hello \n");
+
+    gpio_set_function(PIN_UART_DBG_RX, GPIO_FUNC_UART);
+    gpio_set_function(PIN_UART_DBG_TX, GPIO_FUNC_UART);
+    gpio_pull_up(PIN_UART_DBG_RX);
+    gpio_pull_up(PIN_UART_DBG_TX);
+
 
     i2c_init(H_ANG_SENS_I2C, 100 * 1000);
     gpio_set_function(PIN_H_ANG_SENS_SDA, GPIO_FUNC_I2C);
@@ -566,7 +584,7 @@ int main()
     gpio_pull_up(PIN_H_ANG_SENS_SCL);
     
     //printf("wait\n");
-    set_sys_clock_khz(240000, true);
+
 
     gpio_init(PIN_RPM_METER_R);
     gpio_set_dir(PIN_RPM_METER_R,GPIO_IN);
@@ -639,6 +657,8 @@ int main()
 
     gpio_put(PIN_LOAD_MOTOR_A,0);
     gpio_put(PIN_LOAD_MOTOR_B,0);
+
+    stdio_flush();
     
     //xTaskCreate(init_mechanics,"mechsInit",512,NULL,tskIDLE_PRIORITY+2, &initMechsTask);
     //xTaskCreate(measureRPM,"measRPM",512,NULL,tskIDLE_PRIORITY+2, &measureRPMTask);
@@ -648,7 +668,7 @@ int main()
     xTaskCreate(setup_webui,"webuiSetup",1024,NULL,tskIDLE_PRIORITY+5, &webuiSetupTask);
     //For some reasons, Creating a task here (after webui task) would result in bad things, including the whole wifi/ap/webserver/dhcp not working.
    
-    http_init(&http_server,http_req, 80);
+    
 
 
     vTaskStartScheduler();

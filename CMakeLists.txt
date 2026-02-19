@@ -100,8 +100,8 @@ target_include_directories(TennisRobot PRIVATE
 )
 
 # Modify the below lines to enable/disable output over UART/USB
-pico_enable_stdio_uart(TennisRobot 0)
-pico_enable_stdio_usb(TennisRobot 1)
+pico_enable_stdio_uart(TennisRobot 1)
+pico_enable_stdio_usb(TennisRobot 0)
 
 # Add any user requested libraries
 target_link_libraries(TennisRobot 
