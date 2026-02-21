@@ -42,12 +42,25 @@ typedef struct _http_request_t
     uint8_t* content;
 
     unsigned int target_size;
-    uint8_t* target;
+    uint8_t target[HTTPSERVER_MAX_TARGET_LENGTH];
 } http_request_t;
 
+enum http_response_type
+{
+    HTTP_RESPONSE_TYPE_BLOB,
+    HTTP_RESPONSE_TYPE_STRING,
+    HTTP_RESPONSE_TYPE_NONE
+};
+
+typedef struct _http_response_t
+{
+    enum http_response_type type;
+    void* data_ptr;
+} http_response_t;
 
 
-typedef void (*HTTP_callback_function_t)(http_request_t *req);
+
+typedef http_response_t (*HTTP_callback_function_t)(http_request_t *req);
 
 typedef struct _http_server_t
 {

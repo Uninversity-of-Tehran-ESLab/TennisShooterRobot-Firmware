@@ -454,74 +454,57 @@ static void update_values(__unused void *params)
 
     vTaskDelete(updMechsTask);
 }
-/*
-static void http_req(http_request_t *req)
-{
-    if(strcmp(req->taget,"/") == 0)
-    {
-        const unsigned int chunkSize = 6400;
-        unsigned int total = sizeof(data_ui_html);
-        unsigned int sent = 0;
-        unsigned int toSend = 0;
-        while(sent<total)
-        {
-            toSend = total-sent; //min(total-sent,chunkSize);
-            send(req->incoming_sock,data_ui_html+sent, toSend, 0);
-            sent += toSend;
-        }
 
-        return;
-    }
-    else if(strcmp(req->taget,"/getStats")  == 0)
+static http_response_t http_req(http_request_t *req)
+{
+    printf("REQ RECIEVEDDD!!!\n");
+    if(strcmp(req->target,"/") == 0)
     {
+        printf("Return Home!!!\n");
+        http_response_t resp = {.type = HTTP_RESPONSE_TYPE_BLOB, .data_ptr = data_ui_html};
+        return resp;
+    }
+    /*else if(strcmp(req->target,"/getStats")  == 0)
+    {
+            
             const char st[] = "HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n";
-            send(req->incoming_sock,st ,sizeof(st)-1, 0);
+            //send(req->incoming_sock,st ,sizeof(st)-1, 0);
 
             char sendBuff[HTTPSERVER_MAX_HTTP_LINE_LENGTH];
             int length = snprintf( NULL, 0, "{\"pwml\":%d,\"rpml\":%d,\"pwmr\":%d,\"rpmr\":%d,\"theta\":%d,\"phiTicks\":%d,\"ballSpeed\":%d,\"ballDT\":%d}",PWML,RPML,PWMR,RPMR,currentTheta,currentPhiTicks,ballSpeed,ballDT);
             snprintf( sendBuff, length + 1, "{\"pwml\":%d,\"rpml\":%d,\"pwmr\":%d,\"rpmr\":%d,\"theta\":%d,\"phiTicks\":%d,\"ballSpeed\":%d,\"ballDT\":%d}",PWML,RPML,PWMR,RPMR,currentTheta,currentPhiTicks,ballSpeed,ballDT);
-            send(req->incoming_sock,sendBuff, length, 0);
+            //send(req->incoming_sock,sendBuff, length, 0);
+
+            http_response_t resp = {.type = HTTP_RESPONSE_TYPE_STRING , .data_ptr = };
             return;
     }
-    else if(strcmp(req->taget,"/setParams")  == 0)
+    else if(strcmp(req->target,"/setParams")  == 0)
     {
             const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
-            send(req->incoming_sock,st ,sizeof(st)-1, 0);
+            //send(req->incoming_sock,st ,sizeof(st)-1, 0);
             //rpml=3&rpmr=2&theta=1&phi=4
             sscanf(req->content,"rpml=%hu&rpmr=%hu&theta=%i&phi=%i",&requestedRPML,&requestedRPMR,&requestedTheta,&requestedPhiTicks);
             xTaskCreate(update_values,"mechsUpd",512,NULL,tskIDLE_PRIORITY+2, &updMechsTask);
             return;
     }
-    else if(strcmp(req->taget,"/shoot")  == 0)
+    else if(strcmp(req->target,"/shoot")  == 0)
     {
             const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
-            send(req->incoming_sock,st ,sizeof(st)-1, 0);
+            //send(req->incoming_sock,st ,sizeof(st)-1, 0);
             
             xTaskCreate(shoot,"shoot",512,NULL,tskIDLE_PRIORITY+2, &shootTask);
             return;
     }
-    /*else if(strcmp(req->taget,"/hLeft")  == 0)
-    {
-            const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
-            send(req->incoming_sock,st ,sizeof(st)-1, 0);
-            
-            xTaskCreate(hLeft,"hLeft",512,NULL,tskIDLE_PRIORITY+2, &shootTask);
-            return;
-    }
-    else if(strcmp(req->taget,"/hRight")  == 0)
-    {
-            const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
-            send(req->incoming_sock,st ,sizeof(st)-1, 0);
-            
-            xTaskCreate(hRight,"hRight",512,NULL,tskIDLE_PRIORITY+2, &shootTask);
-            return;
-    }
+
     const char st[] = "HTTP/1.0 404 Not Found\r\nContent-type: text/html\r\n\r\nNot Found!";
-    send(req->incoming_sock,st ,sizeof(st)-1, 0);
-    return;
+    //send(req->incoming_sock,st ,sizeof(st)-1, 0);
+    
+    return;*/
+    http_response_t resp = {.type = HTTP_RESPONSE_TYPE_NONE, .data_ptr = NULL};
+    return resp;
 }
 
-*/
+
 http_server_t http_server;
 dhcp_server_t dhcp_server;
 dns_server_t dns_server;
@@ -546,9 +529,15 @@ static void setup_webui(__unused void *params)
     vTaskDelay(100);
 
     printf("setting up http... \n");
-    http_init(&http_server,NULL, 80);
+    http_init(&http_server,http_req, 80);
+
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
 
+    while (true)
+    {
+        vTaskDelay(1000);
+    }
+    
     vTaskDelete(NULL);
 }
 
@@ -662,7 +651,7 @@ int main()
     
     //xTaskCreate(init_mechanics,"mechsInit",512,NULL,tskIDLE_PRIORITY+2, &initMechsTask);
     //xTaskCreate(measureRPM,"measRPM",512,NULL,tskIDLE_PRIORITY+2, &measureRPMTask);
-    xTaskCreate(h_ang_loop,"hAngLoop",1024,NULL,tskIDLE_PRIORITY+1, &loopHAngleTask);
+    //xTaskCreate(h_ang_loop,"hAngLoop",1024,NULL,tskIDLE_PRIORITY+1, &loopHAngleTask);
 
 
     xTaskCreate(setup_webui,"webuiSetup",1024,NULL,tskIDLE_PRIORITY+5, &webuiSetupTask);
