@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <math.h>
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 
@@ -6,7 +7,7 @@
 
 #include "pico/cyw43_arch.h"
 #include "pico/cyw43_driver.h"
-
+#include "pico/util/queue.h"
 #include "lwip/init.h"
 //#include "lwip/apps/httpd.h"
 
@@ -53,8 +54,8 @@
 #define PIN_LOAD_SWITCH 10
 #define PIN_UNLOAD_SWITCH 11
 
-#define PIN_EN_LOAD 17
-#define PIN_EN_H 16
+#define PIN_EN_LOAD 28
+
 
 
 #define PIN_H_ANG_SENS_SDA 2
@@ -63,12 +64,13 @@
 #define H_ANG_SENS_I2C i2c1
 
 
-#define PIN_H_A 27
-#define PIN_H_B 28
+#define PIN_H_A 16
+#define PIN_H_B 17
+
 
 
 int currentTheta = 0;
-int requestedTheta = 0;
+int requestedTheta = 3000;
 int currentPhiTicks = 0;
 int requestedPhiTicks = 0;
 unsigned short PWMR = 3000;
@@ -88,7 +90,7 @@ unsigned int RPML = 0;
 unsigned int requestedRPML = 0;
 
 
-TaskHandle_t webuiSetupTask,initMechsTask,measureRPMTask,updMechsTask,loopHAngleTask,setVAngleTask,setLMotorSpeed,setRMotorSpeed,loadTask,unloadTask,shootTask;
+TaskHandle_t webuiSetupTask,tuiTask,initMechsTask,measureRPMTask,updMechsTask,loopHAngleTask,setVAngleTask,setLMotorSpeed,setRMotorSpeed,loadTask,unloadTask,shootTask;
 
 
 void set_pwm_frequency(uint pin, uint freq) {
@@ -237,26 +239,89 @@ static void load(__unused void *params)
 }
 
 
+float mapf(float x, float in_min, float in_max, float out_min, float out_max) {
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+queue_t intergral_queue;
 static void h_ang_loop(__unused void *params)
 {
     int ret = 0;
     uint8_t rxdata[2] = {0};
     uint8_t txdata[] = {0x0C};
+    float speed = 20000;
+    
+    float error = 0;
+    float prev_error;
+    float Kp = 20.f;
+    float Ki = 10.f;
+    float integral_sum = 0;
+
+    const uint8_t queue_size = 10;
+    queue_init(&intergral_queue,sizeof(float),queue_size);
+    for(int i = 0;i<queue_size;i++)
+        queue_add_blocking(&intergral_queue,&error);
+
+    printf("Current theta : %d\n",currentTheta);
+    ret = i2c_write_blocking(H_ANG_SENS_I2C,H_ANG_SENS_ADDR,txdata,1,false);
+    ret = i2c_read_blocking(H_ANG_SENS_I2C, H_ANG_SENS_ADDR, rxdata, 2, false);
+    currentTheta = ((rxdata[0] << 8) + rxdata[1]); 
+    requestedTheta  = currentTheta +200;
   
     gpio_put(PIN_H_A,0);
     gpio_put(PIN_H_B,0);
+    uint16_t pwm_test = 0;
     while(true){
        
-     
+        printf("Current theta : %d\n",currentTheta);
         ret = i2c_write_blocking(H_ANG_SENS_I2C,H_ANG_SENS_ADDR,txdata,1,false);
         ret = i2c_read_blocking(H_ANG_SENS_I2C, H_ANG_SENS_ADDR, rxdata, 2, false);
-        currentTheta = (rxdata[0] << 8) + rxdata[1] + 1; 
-        currentTheta = currentTheta + 1;
-        if(ret == PICO_ERROR_GENERIC)
+        currentTheta = (rxdata[0] << 8) + rxdata[1]; 
+        
+
+        error = requestedTheta-currentTheta;
+        if(abs(error) > abs(4095-error))
+            error = 4095-error;
+            
+        
+        queue_remove_blocking(&intergral_queue,&prev_error);
+        integral_sum = integral_sum - (prev_error) + (error); 
+        queue_add_blocking(&intergral_queue,&error);
+
+
+        speed = error * Kp + integral_sum * Ki;
+        printf("Current speed : %f\n",speed);
+        printf("Current intergral : %f\n",integral_sum);
+
+        
+
+        
+      
+        if(speed > 0)
         {
-            currentTheta = 505;
+           
+            if(speed > 1<<16)
+                speed = (1<<16)-1;
+            speed = mapf(speed, 0,1<<16,20000,1<<16);
+            pwm_set_gpio_level(PIN_H_A,(uint16_t)speed);
+            pwm_set_gpio_level(PIN_H_B,0);
         }
-        vTaskDelay(100);
+        if(speed < 0)
+        {
+            
+            if(speed < -(1<<16))
+                speed = -((1<<16)-1);
+
+            speed = -speed;
+            speed = mapf(speed, 0,1<<16,15000,1<<16);
+            pwm_set_gpio_level(PIN_H_A,0);
+            pwm_set_gpio_level(PIN_H_B,(uint16_t)speed);
+        }
+
+        //pwm_test += 10;
+        //pwm_set_gpio_level(PIN_H_A,0);
+        //pwm_set_gpio_level(PIN_H_B,pwm_test);
+        //printf("PWM test : %d\n",pwm_test);
+        vTaskDelay(10);
     }
     vTaskDelete(NULL);
 }
@@ -452,73 +517,90 @@ static void update_values(__unused void *params)
     vTaskDelete(updMechsTask);
 }
 
-static void http_req(http_request_t *req)
+// static void http_req(http_request_t *req)
+// {
+//     if(strcmp(req->taget,"/") == 0)
+//     {
+//         const unsigned int chunkSize = 6400;
+//         unsigned int total = sizeof(data_ui_html);
+//         unsigned int sent = 0;
+//         unsigned int toSend = 0;
+//         while(sent<total)
+//         {
+//             toSend = total-sent; //min(total-sent,chunkSize);
+//             send(req->incoming_sock,data_ui_html+sent, toSend, 0);
+//             sent += toSend;
+//         }rpi pico queue dataastructure
+
+//         return;
+//     }
+//     else if(strcmp(req->taget,"/getStats")  == 0)
+//     {
+//             const char st[] = "HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n";
+//             send(req->incoming_sock,st ,sizeof(st)-1, 0);
+
+//             char sendBuff[HTTPSERVER_MAX_HTTP_LINE_LENGTH];
+//             int length = snprintf( NULL, 0, "{\"pwml\":%d,\"rpml\":%d,\"pwmr\":%d,\"rpmr\":%d,\"theta\":%d,\"phiTicks\":%d,\"ballSpeed\":%d,\"ballDT\":%d}",PWML,RPML,PWMR,RPMR,currentTheta,currentPhiTicks,ballSpeed,ballDT);
+//             snprintf( sendBuff, length + 1, "{\"pwml\":%d,\"rpml\":%d,\"pwmr\":%d,\"rpmr\":%d,\"theta\":%d,\"phiTicks\":%d,\"ballSpeed\":%d,\"ballDT\":%d}",PWML,RPML,PWMR,RPMR,currentTheta,currentPhiTicks,ballSpeed,ballDT);
+//             send(req->incoming_sock,sendBuff, length, 0);
+//             return;
+//     }
+//     else if(strcmp(req->taget,"/setParams")  == 0)
+//     {
+//             const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
+//             send(req->incoming_sock,st ,sizeof(st)-1, 0);
+//             //rpml=3&rpmr=2&theta=1&phi=4
+//             sscanf(req->content,"rpml=%hu&rpmr=%hu&theta=%i&phi=%i",&requestedRPML,&requestedRPMR,&requestedTheta,&requestedPhiTicks);
+//             xTaskCreate(update_values,"mechsUpd",512,NULL,tskIDLE_PRIORITY+2, &updMechsTask);
+//             return;
+//     }
+//     else if(strcmp(req->taget,"/shoot")  == 0)
+//     {
+//             const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
+//             send(req->incoming_sock,st ,sizeof(st)-1, 0);
+            
+//             xTaskCreate(shoot,"shoot",512,NULL,tskIDLE_PRIORITY+2, &shootTask);
+//             return;
+//     }
+//     /*else if(strcmp(req->taget,"/hLeft")  == 0)
+//     {
+//             const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
+//             send(req->incoming_sock,st ,sizeof(st)-1, 0);
+            
+//             xTaskCreate(hLeft,"hLeft",512,NULL,tskIDLE_PRIORITY+2, &shootTask);
+//             return;
+//     }
+//     else if(strcmp(req->taget,"/hRight")  == 0)
+//     {
+//             const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
+//             send(req->incoming_sock,st ,sizeof(st)-1, 0);
+            
+//             xTaskCreate(hRight,"hRight",512,NULL,tskIDLE_PRIORITY+2, &shootTask);
+//             return;
+//     }*/
+//     const char st[] = "HTTP/1.0 404 Not Found\r\nContent-type: text/html\r\n\r\nNot Found!";
+//     send(req->incoming_sock,st ,sizeof(st)-1, 0);
+//     return;
+// }
+
+static void tui_loop(__unused void *params)
 {
-    if(strcmp(req->taget,"/") == 0)
+    char command[64];
+    int arg;
+    while(true)
     {
-        const unsigned int chunkSize = 6400;
-        unsigned int total = sizeof(data_ui_html);
-        unsigned int sent = 0;
-        unsigned int toSend = 0;
-        while(sent<total)
+        scanf("%s %d\n",command, &arg);
+        if(strcmp(command,"set_h"))
         {
-            toSend = total-sent; //min(total-sent,chunkSize);
-            send(req->incoming_sock,data_ui_html+sent, toSend, 0);
-            sent += toSend;
+            requestedTheta = arg;
+            printf("Requested Theta as : %d\n",requestedTheta);
+        } 
+        else if(strcmp(command,"get_h"))
+        {
+            printf("Current Theta as : %d\n",currentTheta);
         }
-
-        return;
     }
-    else if(strcmp(req->taget,"/getStats")  == 0)
-    {
-            const char st[] = "HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n";
-            send(req->incoming_sock,st ,sizeof(st)-1, 0);
-
-            char sendBuff[HTTPSERVER_MAX_HTTP_LINE_LENGTH];
-            int length = snprintf( NULL, 0, "{\"pwml\":%d,\"rpml\":%d,\"pwmr\":%d,\"rpmr\":%d,\"theta\":%d,\"phiTicks\":%d,\"ballSpeed\":%d,\"ballDT\":%d}",PWML,RPML,PWMR,RPMR,currentTheta,currentPhiTicks,ballSpeed,ballDT);
-            snprintf( sendBuff, length + 1, "{\"pwml\":%d,\"rpml\":%d,\"pwmr\":%d,\"rpmr\":%d,\"theta\":%d,\"phiTicks\":%d,\"ballSpeed\":%d,\"ballDT\":%d}",PWML,RPML,PWMR,RPMR,currentTheta,currentPhiTicks,ballSpeed,ballDT);
-            send(req->incoming_sock,sendBuff, length, 0);
-            return;
-    }
-    else if(strcmp(req->taget,"/setParams")  == 0)
-    {
-            const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
-            send(req->incoming_sock,st ,sizeof(st)-1, 0);
-            //rpml=3&rpmr=2&theta=1&phi=4
-            sscanf(req->content,"rpml=%hu&rpmr=%hu&theta=%i&phi=%i",&requestedRPML,&requestedRPMR,&requestedTheta,&requestedPhiTicks);
-            xTaskCreate(update_values,"mechsUpd",512,NULL,tskIDLE_PRIORITY+2, &updMechsTask);
-            return;
-    }
-    else if(strcmp(req->taget,"/shoot")  == 0)
-    {
-            const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
-            send(req->incoming_sock,st ,sizeof(st)-1, 0);
-            
-            xTaskCreate(shoot,"shoot",512,NULL,tskIDLE_PRIORITY+2, &shootTask);
-            return;
-    }
-    /*else if(strcmp(req->taget,"/hLeft")  == 0)
-    {
-            const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
-            send(req->incoming_sock,st ,sizeof(st)-1, 0);
-            
-            xTaskCreate(hLeft,"hLeft",512,NULL,tskIDLE_PRIORITY+2, &shootTask);
-            return;
-    }
-    else if(strcmp(req->taget,"/hRight")  == 0)
-    {
-            const char st[] = "HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\nok";
-            send(req->incoming_sock,st ,sizeof(st)-1, 0);
-            
-            xTaskCreate(hRight,"hRight",512,NULL,tskIDLE_PRIORITY+2, &shootTask);
-            return;
-    }*/
-    const char st[] = "HTTP/1.0 404 Not Found\r\nContent-type: text/html\r\n\r\nNot Found!";
-    send(req->incoming_sock,st ,sizeof(st)-1, 0);
-    return;
 }
-
-
 
 static void setup_webui(__unused void *params)
 {
@@ -554,6 +636,7 @@ void gpio_callback(uint gpio, uint32_t events) {
  http_server_t http_server;
 int main()
 {
+     set_sys_clock_khz(240000, true);
     stdio_init_all();
     gpio_init(22);
     gpio_set_dir(22,GPIO_OUT);
@@ -566,7 +649,7 @@ int main()
     gpio_pull_up(PIN_H_ANG_SENS_SCL);
     
     //printf("wait\n");
-    set_sys_clock_khz(240000, true);
+   
 
     gpio_init(PIN_RPM_METER_R);
     gpio_set_dir(PIN_RPM_METER_R,GPIO_IN);
@@ -578,9 +661,13 @@ int main()
 
     gpio_init(PIN_H_A);
     gpio_set_dir(PIN_H_A,GPIO_OUT);
+    gpio_set_function(PIN_H_A,GPIO_FUNC_PWM);
+    set_pwm_frequency(PIN_H_A,800);
 
     gpio_init(PIN_H_B);
     gpio_set_dir(PIN_H_B,GPIO_OUT);
+    gpio_set_function(PIN_H_B,GPIO_FUNC_PWM);
+    set_pwm_frequency(PIN_H_B,800);
 
     gpio_init(PIN_LOAD_MOTOR_A);
     gpio_set_dir(PIN_LOAD_MOTOR_A,GPIO_OUT);
@@ -643,12 +730,12 @@ int main()
     //xTaskCreate(init_mechanics,"mechsInit",512,NULL,tskIDLE_PRIORITY+2, &initMechsTask);
     //xTaskCreate(measureRPM,"measRPM",512,NULL,tskIDLE_PRIORITY+2, &measureRPMTask);
     xTaskCreate(h_ang_loop,"hAngLoop",1024,NULL,tskIDLE_PRIORITY+1, &loopHAngleTask);
+    xTaskCreate(tui_loop,"tuiLoop",1024,NULL,tskIDLE_PRIORITY+1,&tuiTask);
 
-
-    xTaskCreate(setup_webui,"webuiSetup",1024,NULL,tskIDLE_PRIORITY+5, &webuiSetupTask);
+    //xTaskCreate(setup_webui,"webuiSetup",1024,NULL,tskIDLE_PRIORITY+5, &webuiSetupTask);
     //For some reasons, Creating a task here (after webui task) would result in bad things, including the whole wifi/ap/webserver/dhcp not working.
    
-    http_init(&http_server,http_req, 80);
+
 
 
     vTaskStartScheduler();
