@@ -37,11 +37,11 @@
 #define PIN_RPM_METER_R 21
 #define PIN_RPM_METER_L 19
 
-#define PIN_LOAD_MOTOR_A 6
-#define PIN_LOAD_MOTOR_B 7
+#define PIN_LOAD_MOTOR_A 28
+#define PIN_LOAD_MOTOR_B 27
 
-#define PIN_ANGLE_MOTOR_A 0
-#define PIN_ANGLE_MOTOR_B 1
+#define PIN_ANGLE_MOTOR_A 26
+#define PIN_ANGLE_MOTOR_B 22
 
 #define PIN_LAUNCH_MOTOR_L 8
 
@@ -54,7 +54,7 @@
 #define PIN_LOAD_SWITCH 10
 #define PIN_UNLOAD_SWITCH 11
 
-#define PIN_EN_LOAD 28
+#define PIN_EN_LOAD 4
 
 
 
@@ -64,8 +64,9 @@
 #define H_ANG_SENS_I2C i2c1
 
 
-#define PIN_H_A 16
-#define PIN_H_B 17
+#define PIN_H_STEPPER_PUL 6
+#define PIN_H_STEPPER_DIR 7
+#define PIN_H_STEPPER_EN 16
 
 
 
@@ -181,7 +182,6 @@ void setPhiTicks(void* params)
     int dest = *(int*) params;
     movePhiTicks(dest-currentPhiTicks);
 }
-
 static void unload(__unused void *params)
 {
     gpio_put(PIN_LOAD_MOTOR_A,0);
@@ -238,10 +238,11 @@ static void load(__unused void *params)
     vTaskDelete(NULL);
 }
 
-
+/*
 float mapf(float x, float in_min, float in_max, float out_min, float out_max) {
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
+  
 queue_t intergral_queue;
 static void h_ang_loop(__unused void *params)
 {
@@ -325,6 +326,71 @@ static void h_ang_loop(__unused void *params)
     }
     vTaskDelete(NULL);
 }
+*/
+static void h_ang_loop(__unused void *params)
+{
+    gpio_put(PIN_H_STEPPER_DIR,0);
+    gpio_put(PIN_H_STEPPER_EN,0);
+    gpio_put(PIN_H_STEPPER_PUL,0);
+    int ret = 0;
+    uint8_t rxdata[2] = {0};
+    uint8_t txdata[] = {0x0C};
+    float speed = 20000;
+    
+    int error = 0;
+    printf("Current theta : %d\n",currentTheta);
+    ret = i2c_write_blocking(H_ANG_SENS_I2C,H_ANG_SENS_ADDR,txdata,1,false);
+    ret = i2c_read_blocking(H_ANG_SENS_I2C, H_ANG_SENS_ADDR, rxdata, 2, false);
+    currentTheta = ((rxdata[0] << 8) + rxdata[1]);
+
+    requestedTheta  = currentTheta +200;
+    int currentStep = (float)currentTheta/4060*200*40/16;
+    int requestedStep = (float)requestedTheta/4060*200*40/16;
+    requestedStep=((float)currentTheta/4060*360+90)/360*200*40/16;
+    int errorStep=0;
+    int oldStep = currentStep;
+    gpio_put(PIN_H_STEPPER_EN,1);
+    while(true){
+
+        
+        if (requestedStep == currentStep){errorStep=0;}
+        else if (oldStep == currentStep)
+
+        
+       
+        printf("Current theta : %d\n",currentTheta);
+        ret = i2c_write_blocking(H_ANG_SENS_I2C,H_ANG_SENS_ADDR,txdata,1,false);
+        ret = i2c_read_blocking(H_ANG_SENS_I2C, H_ANG_SENS_ADDR, rxdata, 2, false);
+        currentTheta = (rxdata[0] << 8) + rxdata[1];
+        currentStep = (float)currentTheta/4060*200*40/16;
+        
+
+        error = requestedTheta-currentTheta;
+
+        if(error > 0)
+            gpio_put(PIN_H_STEPPER_DIR,0);
+        else
+            gpio_put(PIN_H_STEPPER_DIR,1);
+
+        error = ((float)error / 4096.f)*360.f;
+
+        printf("Error be like : %d\n",error);
+      
+        for(int i = 0;i<errorStep;i++)
+        {
+            gpio_put(PIN_H_STEPPER_PUL,0);
+            vTaskDelay(0.6);
+            gpio_put(PIN_H_STEPPER_PUL,1);
+            vTaskDelay(0.6);
+         
+            
+        }
+
+        //vTaskDelay(10);
+    }
+    vTaskDelete(NULL);
+}
+
 
 static void shoot(__unused void *params)
 {
@@ -448,7 +514,6 @@ static void init_mechanics(__unused void *params)
 
     gpio_put(PIN_LOAD_MOTOR_A,0);
     gpio_put(PIN_LOAD_MOTOR_B,0);
-
     //xTaskCreate(calibrateAngling,"hAngCal",1024,NULL,tskIDLE_PRIORITY+2, &calibrateHAngleTask);
 
     //Beep Here
@@ -538,7 +603,6 @@ static void update_values(__unused void *params)
 //     {
 //             const char st[] = "HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n";
 //             send(req->incoming_sock,st ,sizeof(st)-1, 0);
-
 //             char sendBuff[HTTPSERVER_MAX_HTTP_LINE_LENGTH];
 //             int length = snprintf( NULL, 0, "{\"pwml\":%d,\"rpml\":%d,\"pwmr\":%d,\"rpmr\":%d,\"theta\":%d,\"phiTicks\":%d,\"ballSpeed\":%d,\"ballDT\":%d}",PWML,RPML,PWMR,RPMR,currentTheta,currentPhiTicks,ballSpeed,ballDT);
 //             snprintf( sendBuff, length + 1, "{\"pwml\":%d,\"rpml\":%d,\"pwmr\":%d,\"rpmr\":%d,\"theta\":%d,\"phiTicks\":%d,\"ballSpeed\":%d,\"ballDT\":%d}",PWML,RPML,PWMR,RPMR,currentTheta,currentPhiTicks,ballSpeed,ballDT);
@@ -658,16 +722,16 @@ int main()
     gpio_init(PIN_RPM_METER_L);
     gpio_set_dir(PIN_RPM_METER_L,GPIO_IN);
     gpio_pull_down(PIN_RPM_METER_L);
+    gpio_init(PIN_H_STEPPER_DIR);
+    gpio_set_dir(PIN_H_STEPPER_DIR,GPIO_OUT);
 
-    gpio_init(PIN_H_A);
-    gpio_set_dir(PIN_H_A,GPIO_OUT);
-    gpio_set_function(PIN_H_A,GPIO_FUNC_PWM);
-    set_pwm_frequency(PIN_H_A,800);
+    gpio_init(PIN_H_STEPPER_PUL);
+    gpio_set_dir(PIN_H_STEPPER_PUL,GPIO_OUT);
 
-    gpio_init(PIN_H_B);
-    gpio_set_dir(PIN_H_B,GPIO_OUT);
-    gpio_set_function(PIN_H_B,GPIO_FUNC_PWM);
-    set_pwm_frequency(PIN_H_B,800);
+    gpio_init(PIN_H_STEPPER_EN);
+    gpio_set_dir(PIN_H_STEPPER_EN,GPIO_OUT);
+
+
 
     gpio_init(PIN_LOAD_MOTOR_A);
     gpio_set_dir(PIN_LOAD_MOTOR_A,GPIO_OUT);
